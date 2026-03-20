@@ -1,0 +1,10 @@
+# 依存関係
+node_modules/
+.next/
+
+# 環境変数（絶対にGitHubにpushしない！）
+.env.local
+.env
+
+# OS
+.DS_Store
