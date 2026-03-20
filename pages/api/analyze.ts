@@ -83,7 +83,7 @@ export default async function handler(
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ inputs: chunk }),
+        body: JSON.stringify({ inputs: chunk, options: { truncation: true } }),
       });
 
       // モデルがロード中の場合（コールドスタート）
@@ -95,12 +95,17 @@ export default async function handler(
 
       if (!hfRes.ok) {
         const errText = await hfRes.text();
-        console.error("HuggingFace API error:", errText);
-        return res.status(500).json({ error: "判定中にエラーが発生しました" });
+        console.error("HuggingFace API error:", hfRes.status, errText);
+        return res.status(500).json({ error: `判定エラー(${hfRes.status}): ${errText}` });
       }
 
-      const data: HFResult[] = await hfRes.json();
-      const results = data[0];
+      const raw = await hfRes.json();
+      console.log("HuggingFace response:", JSON.stringify(raw));
+
+      // レスポンス形式を柔軟に対応
+      // 形式A: [[{label, score}, ...]]
+      // 形式B: [{label, score}, ...]
+      const results: HFResult = Array.isArray(raw[0]) ? raw[0] : raw;
 
       const aiEntry = results.find((r) => r.label === "LABEL_1");
       const humanEntry = results.find((r) => r.label === "LABEL_0");
