@@ -272,12 +272,12 @@ export default function Home() {
         <p className="text-center text-xs text-gray-400 mt-8">
           Powered by{" "}
           <a
-            href="https://huggingface.co/roberta-base-openai-detector"
+            href="https://huggingface.co/openai-community/roberta-large-openai-detector"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-gray-600"
           >
-            roberta-base-openai-detector
+            roberta-large-openai-detector
           </a>
         </p>
       </div>
