@@ -91,7 +91,8 @@ export default function Home() {
       <meta name="twitter:card" content="summary" />
       <meta name="twitter:title" content="AI文章チェッカー｜AIが書いたか無料で判定" />
       <meta name="twitter:description" content="テキストを貼り付けるだけでAIが書いた文章かどうかを無料で判定。" />
-      <link rel="canonical" href="https://あなたのドメイン.vercel.app" />
+      <link rel="canonical" href="https://ai-detector-plum.vercel.app" />
+      <meta name="google-site-verification" content="LHsM05zq2_ySxflWm5ALpFfo_CTiilUHXuYzuApb500" />
     </Head>
     <div className="min-h-screen bg-gray-50 py-12 px-4">
       <div className="max-w-2xl mx-auto">
