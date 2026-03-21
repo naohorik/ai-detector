@@ -62,7 +62,7 @@ function extractHighlights(text: string, language: string): string[] {
     const matches = text.match(pattern);
     if (matches) found.push(...matches.map((m) => m.trim()));
   }
-  return [...new Set(found)].slice(0, 10); // 重複除去・最大10件
+  return Array.from(new Set(found)).slice(0, 10); // 重複除去・最大10件
 }
 
 // ── 判定理由の生成 ────────────────────────────────────────
