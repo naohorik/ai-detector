@@ -17,6 +17,18 @@ type Result = {
   modelScores: { model: string; score: number }[];
 };
 
+type RewriteSuggestion = {
+  original: string;
+  rewritten: string;
+  reason: string;
+  type: "phrase" | "structure" | "length" | "tone";
+};
+
+type RewriteResult = {
+  suggestions: RewriteSuggestion[];
+  rewrittenFull: string;
+};
+
 // ── 定数 ────────────────────────────────────────────────
 const MIN_CHARS = 200;
 const MAX_CHARS = 5000;
@@ -134,6 +146,9 @@ export default function Home() {
   const [dark, setDark] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [showResult, setShowResult] = useState(false);
+  const [rewriteResult, setRewriteResult] = useState<RewriteResult | null>(null);
+  const [rewriteLoading, setRewriteLoading] = useState(false);
+  const [showRewriteFull, setShowRewriteFull] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const charCount = text.length;
@@ -181,7 +196,31 @@ export default function Home() {
     }
   };
 
-  const handleReset = () => { setText(""); setResult(null); setError(null); setShowResult(false); };
+  const handleReset = () => {
+    setText(""); setResult(null); setError(null); setShowResult(false);
+    setRewriteResult(null); setShowRewriteFull(false);
+  };
+
+  const handleRewrite = async () => {
+    if (!result || !text) return;
+    setRewriteLoading(true);
+    setRewriteResult(null);
+    setShowRewriteFull(false);
+    try {
+      const res = await fetch("/api/rewrite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language: result.language }),
+      });
+      const data = await res.json();
+      if (!res.ok) { return; }
+      setRewriteResult(data as RewriteResult);
+    } catch {
+      // silently fail
+    } finally {
+      setRewriteLoading(false);
+    }
+  };
 
   // SNS シェアテキスト生成
   const getShareText = (r: Result) => {
@@ -395,6 +434,100 @@ export default function Home() {
                         </li>
                       ))}
                     </ul>
+                  </div>
+                )}
+
+                {/* 文章改善アシスタント */}
+                {result.aiScore >= 31 && (
+                  <div className="mb-6">
+                    {!rewriteResult && (
+                      <button
+                        onClick={handleRewrite}
+                        disabled={rewriteLoading}
+                        className={`w-full py-2.5 rounded-lg border-2 border-dashed text-sm font-medium transition
+                          ${rewriteLoading
+                            ? "border-purple-300 text-purple-400 dark:border-purple-700 dark:text-purple-500 cursor-not-allowed"
+                            : "border-purple-400 text-purple-600 dark:border-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 active:scale-99"
+                          }`}
+                      >
+                        {rewriteLoading ? (
+                          <span className="flex items-center justify-center gap-2">
+                            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                            </svg>
+                            改善案を生成中...
+                          </span>
+                        ) : "✨ AI文章改善アシスタントを使う"}
+                      </button>
+                    )}
+
+                    {rewriteResult && (
+                      <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-xl p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">✨ 文章改善アシスタント</h3>
+                          <button
+                            onClick={() => { setRewriteResult(null); setShowRewriteFull(false); }}
+                            className="text-xs text-purple-400 hover:text-purple-600 dark:hover:text-purple-300"
+                          >
+                            閉じる
+                          </button>
+                        </div>
+
+                        {rewriteResult.suggestions.length === 0 ? (
+                          <p className="text-sm text-purple-600 dark:text-purple-400">具体的な改善箇所は見つかりませんでした。自分らしい表現を加えてみましょう。</p>
+                        ) : (
+                          <>
+                            <p className="text-xs text-purple-500 dark:text-purple-400 mb-3">{rewriteResult.suggestions.length}件の改善ポイントが見つかりました：</p>
+                            <div className="space-y-3">
+                              {rewriteResult.suggestions.map((s, i) => (
+                                <div key={i} className="bg-white dark:bg-gray-800 rounded-lg p-3 text-xs border border-purple-100 dark:border-purple-800">
+                                  <div className="flex items-start gap-1.5 mb-2">
+                                    <span className="shrink-0 text-purple-400 font-bold">{i + 1}.</span>
+                                    <span className="text-gray-500 dark:text-gray-400">{s.reason}</span>
+                                  </div>
+                                  <div className="flex flex-col gap-1.5">
+                                    <div className="flex items-start gap-2">
+                                      <span className="shrink-0 text-red-400 font-semibold w-6">前</span>
+                                      <span className="text-gray-600 dark:text-gray-300 bg-red-50 dark:bg-red-900/20 rounded px-2 py-0.5 line-through decoration-red-300">{s.original}</span>
+                                    </div>
+                                    <div className="flex items-start gap-2">
+                                      <span className="shrink-0 text-green-500 font-semibold w-6">後</span>
+                                      <span className="text-gray-700 dark:text-gray-200 bg-green-50 dark:bg-green-900/20 rounded px-2 py-0.5">{s.rewritten || <span className="text-gray-400 italic">（削除）</span>}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* 全体書き直し版を表示 */}
+                            <div className="mt-4">
+                              <button
+                                onClick={() => setShowRewriteFull(!showRewriteFull)}
+                                className="text-xs text-purple-600 dark:text-purple-400 underline hover:no-underline"
+                              >
+                                {showRewriteFull ? "▲ 全体書き直し版を非表示" : "▼ 全体書き直し版を見る"}
+                              </button>
+                              {showRewriteFull && (
+                                <div className="mt-2">
+                                  <div className="relative">
+                                    <div className="text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-purple-200 dark:border-purple-700 rounded-lg p-3 whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
+                                      {rewriteResult.rewrittenFull}
+                                    </div>
+                                    <button
+                                      onClick={() => navigator.clipboard.writeText(rewriteResult.rewrittenFull)}
+                                      className="mt-2 text-xs text-purple-500 dark:text-purple-400 hover:text-purple-700 border border-purple-200 dark:border-purple-700 rounded px-3 py-1 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition"
+                                    >
+                                      📋 コピー
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
