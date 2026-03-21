@@ -7,6 +7,7 @@ type Result = {
   humanScore: number;
   verdict: "human" | "unclear" | "ai";
   label: string;
+  reasons: string[];
 };
 
 // ── 定数 ────────────────────────────────────────────────
@@ -259,6 +260,23 @@ export default function Home() {
                 />
               </div>
             </div>
+
+            {/* 判定理由 */}
+            {result.reasons && result.reasons.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                  📋 判定の根拠
+                </h3>
+                <ul className="space-y-2">
+                  {result.reasons.map((reason, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                      <span className="mt-0.5 text-blue-400 shrink-0">›</span>
+                      <span>{reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* 注意書き */}
             <p className="text-xs text-gray-400 leading-relaxed">
