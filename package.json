@@ -9,8 +9,10 @@
     "postbuild": "next-sitemap"
   },
   "dependencies": {
+    "mammoth": "^1.7.0",
     "next": "^15.2.3",
     "next-sitemap": "^4.2.3",
+    "pdf-parse": "^1.1.1",
     "react": "^18",
     "react-dom": "^18"
   },

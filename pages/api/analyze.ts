@@ -7,9 +7,11 @@ type SuccessResponse = {
   verdict: "human" | "unclear" | "ai";
   label: string;
   reasons: string[];
-  highlights: string[];           // ハイライト対象フレーズ
-  language: "ja" | "en" | "mixed"; // 検出言語
-  languageWarning?: string;       // 日本語時の注意メッセージ
+  highlights: string[];
+  language: "ja" | "en" | "mixed";
+  languageWarning?: string;
+  rewriteScore: number;       // 書き直し推奨度 0〜100
+  rewriteTips: string[];      // 書き直しの具体的アドバイス
 };
 
 type ErrorResponse = { error: string };
@@ -119,6 +121,38 @@ function getVerdict(aiScore: number): { verdict: SuccessResponse["verdict"]; lab
   return { verdict: "ai", label: "AIが書いた可能性が高い" };
 }
 
+// ── コピペ対策スコア ──────────────────────────────────────
+function getRewriteInfo(aiScore: number, highlights: string[], language: string): {
+  rewriteScore: number;
+  rewriteTips: string[];
+} {
+  if (aiScore <= 30) return { rewriteScore: 0, rewriteTips: [] };
+
+  const rewriteScore = Math.min(100, Math.round(aiScore * 0.9 + highlights.length * 3));
+
+  const tips: string[] = [];
+
+  // ハイライトされたフレーズを具体的に書き直し提案
+  if (highlights.length > 0) {
+    tips.push(`AI特有の表現（${highlights.slice(0, 3).map(h => `「${h}」`).join("・")}）を日常的な言葉に言い換える`);
+  }
+
+  if (language === "en" || language === "mixed") {
+    tips.push('"Furthermore" "Moreover" などの接続詞を "Also" "And" などシンプルな表現に変える');
+    tips.push("文を短く区切り、長い複合文を避ける");
+  }
+
+  if (language === "ja" || language === "mixed") {
+    tips.push("「また、」「さらに、」の多用を避け、文章をつなぎ直す");
+    tips.push("「考えられます」「思われます」などの曖昧な表現を断定的な言い方に変える");
+  }
+
+  tips.push("箇条書きを段落に変換するか、逆に段落を箇条書きにして構造を変える");
+  tips.push("自分の経験・具体的なエピソードを1〜2文加える");
+
+  return { rewriteScore, rewriteTips: tips.slice(0, 4) };
+}
+
 // ── ハンドラ ─────────────────────────────────────────────
 export default async function handler(
   req: NextApiRequest,
@@ -176,6 +210,7 @@ export default async function handler(
     const { verdict, label } = getVerdict(aiScore);
     const reasons = analyzeReasons(text, aiScore, language);
     const highlights = extractHighlights(text, language);
+    const { rewriteScore, rewriteTips } = getRewriteInfo(aiScore, highlights, language);
 
     const languageWarning =
       language === "ja"
@@ -184,7 +219,7 @@ export default async function handler(
         ? "日英混在のテキストが検出されました。英語部分の判定精度が高くなります"
         : undefined;
 
-    return res.status(200).json({ aiScore, humanScore, verdict, label, reasons, highlights, language, languageWarning });
+    return res.status(200).json({ aiScore, humanScore, verdict, label, reasons, highlights, language, languageWarning, rewriteScore, rewriteTips });
   } catch (err) {
     console.error("Unexpected error:", err);
     return res.status(500).json({ error: "予期しないエラーが発生しました" });
