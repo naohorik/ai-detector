@@ -18,7 +18,7 @@ type HFResult = { label: string; score: number }[];
 // ── 定数 ────────────────────────────────────────────────
 const MIN_CHARS = 200;   // 最小文字数（論文・レポート向けに200文字以上）
 const MAX_CHARS = 5000;  // 最大文字数
-const CHUNK_SIZE = 400;  // モデルのトークン上限に合わせた1チャンクの文字数
+const CHUNK_SIZE = 250;  // モデルのトークン上限(512)に合わせた1チャンクの文字数
 const HF_MODEL_URL =
   "https://router.huggingface.co/hf-inference/models/openai-community/roberta-large-openai-detector";
 
