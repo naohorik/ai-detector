@@ -13,16 +13,24 @@ type Result = {
   languageWarning?: string;
   rewriteScore: number;
   rewriteTips: string[];
+  elapsedMs: number;
+  modelScores: { model: string; score: number }[];
 };
 
 // ── 定数 ────────────────────────────────────────────────
 const MIN_CHARS = 200;
 const MAX_CHARS = 5000;
+const SITE_URL = "https://ai-detector-plum.vercel.app";
 
 const VERDICT_STYLES = {
   human:   { bar: "bg-green-500",  badge: "bg-green-100  text-green-800  border-green-300  dark:bg-green-900  dark:text-green-200  dark:border-green-700",  icon: "✅" },
   unclear: { bar: "bg-yellow-400", badge: "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900 dark:text-yellow-200 dark:border-yellow-700", icon: "⚠️" },
   ai:      { bar: "bg-red-500",    badge: "bg-red-100    text-red-800    border-red-300    dark:bg-red-900    dark:text-red-200    dark:border-red-700",    icon: "🤖" },
+};
+
+const MODEL_DISPLAY: Record<string, string> = {
+  "roberta-large": "RoBERTa Large",
+  "fakespot": "Fakespot",
 };
 
 // ── カウントアップアニメーション ──────────────────────────
@@ -82,7 +90,6 @@ function ScoreBar({ label, score, colorClass }: { label: string; score: number; 
 
 // ── ファイル読み込み ──────────────────────────────────────
 async function extractTextFromFile(file: File): Promise<string> {
-  // .txt
   if (file.type === "text/plain" || file.name.endsWith(".txt")) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -92,13 +99,12 @@ async function extractTextFromFile(file: File): Promise<string> {
     });
   }
 
-  // .pdf または .docx → サーバーAPIで抽出
   if (file.name.endsWith(".pdf") || file.name.endsWith(".docx")) {
     const base64 = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         const result = e.target?.result as string;
-        resolve(result.split(",")[1]); // base64部分のみ
+        resolve(result.split(",")[1]);
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
@@ -167,7 +173,6 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? "エラーが発生しました"); return; }
       setResult(data as Result);
-      // 少し遅延させてアニメーションを発火
       setTimeout(() => setShowResult(true), 50);
     } catch {
       setError("ネットワークエラーが発生しました。再度お試しください。");
@@ -178,7 +183,25 @@ export default function Home() {
 
   const handleReset = () => { setText(""); setResult(null); setError(null); setShowResult(false); };
 
+  // SNS シェアテキスト生成
+  const getShareText = (r: Result) => {
+    const emoji = r.verdict === "ai" ? "🤖" : r.verdict === "human" ? "✅" : "⚠️";
+    return `${emoji} AI文章チェッカーで判定しました！\nAIスコア: ${r.aiScore}% / 人間スコア: ${r.humanScore}%\n判定: ${r.label}\n\n#AI文章チェッカー #AI判定`;
+  };
+
+  const handleShare = () => {
+    if (!result) return;
+    const shareText = getShareText(result);
+    const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(SITE_URL)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   const style = result ? VERDICT_STYLES[result.verdict] : null;
+
+  // OGP用の動的URL（結果があれば動的、なければデフォルト）
+  const ogImageUrl = result
+    ? `${SITE_URL}/api/og?score=${result.aiScore}&verdict=${result.verdict}`
+    : `${SITE_URL}/api/og`;
 
   return (
     <div className={dark ? "dark" : ""}>
@@ -188,12 +211,15 @@ export default function Home() {
           <meta name="description" content="テキストを貼り付けるだけでAIが書いた文章かどうかを無料で判定。ChatGPT・Claude等のAI生成文章を瞬時に検出します。" />
           <meta name="keywords" content="AI文章判定,ChatGPT検出,AI生成チェック,AI文章チェッカー,無料" />
           <meta property="og:title" content="AI文章チェッカー｜AIが書いたか無料で判定" />
-          <meta property="og:description" content="テキストを貼り付けるだけでAIが書いた文章かどうかを無料で判定。" />
+          <meta property="og:description" content="テキストを貼り付けるだけでAIが書いた文章かどうかを無料で判定。ChatGPT・Claude等のAI生成文章を検出します。" />
           <meta property="og:type" content="website" />
-          <meta name="twitter:card" content="summary" />
+          <meta property="og:image" content={`${SITE_URL}/api/og`} />
+          <meta property="og:url" content={SITE_URL} />
+          <meta name="twitter:card" content="summary_large_image" />
           <meta name="twitter:title" content="AI文章チェッカー｜AIが書いたか無料で判定" />
           <meta name="twitter:description" content="テキストを貼り付けるだけでAIが書いた文章かどうかを無料で判定。" />
-          <link rel="canonical" href="https://ai-detector-plum.vercel.app" />
+          <meta name="twitter:image" content={ogImageUrl} />
+          <link rel="canonical" href={SITE_URL} />
           <meta name="google-site-verification" content="LHsM05zq2_ySxflWm5ALpFfo_CTiilUHXuYzuApb500" />
         </Head>
 
@@ -281,7 +307,13 @@ export default function Home() {
           {result && style && (
             <div className={`mt-6 transition-all duration-500 ${showResult ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
               <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-                <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">判定結果</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">判定結果</h2>
+                  {/* 判定スピード */}
+                  <span className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
+                    ⚡ {result.elapsedMs < 1000 ? `${result.elapsedMs}ms` : `${(result.elapsedMs / 1000).toFixed(1)}s`}
+                  </span>
+                </div>
 
                 {result.languageWarning && (
                   <div className="mb-4 text-xs bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg px-3 py-2 text-yellow-700 dark:text-yellow-300">
@@ -294,9 +326,30 @@ export default function Home() {
                   <span>{style.icon}</span><span>{result.label}</span>
                 </div>
 
-                {/* スコアバー（アニメーション付き） */}
+                {/* スコアバー */}
                 <ScoreBar label="🤖 AI生成らしさ" score={result.aiScore} colorClass={style.bar} />
                 <ScoreBar label="✍️ 人間らしさ" score={result.humanScore} colorClass="bg-green-400" />
+
+                {/* モデル別スコア */}
+                {result.modelScores && result.modelScores.length > 1 && (
+                  <div className="mb-6 bg-gray-50 dark:bg-gray-900/50 rounded-xl p-3">
+                    <h3 className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-2">🧩 モデル別スコア</h3>
+                    <div className="space-y-2">
+                      {result.modelScores.map((m) => (
+                        <div key={m.model} className="flex items-center gap-3">
+                          <span className="text-xs text-gray-500 dark:text-gray-400 w-32 shrink-0">{MODEL_DISPLAY[m.model] ?? m.model}</span>
+                          <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full transition-all duration-700 ${m.score >= 70 ? "bg-red-400" : m.score >= 31 ? "bg-yellow-400" : "bg-green-400"}`}
+                              style={{ width: `${m.score}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-semibold text-gray-600 dark:text-gray-300 w-8 text-right">{m.score}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* ハイライト */}
                 {result.highlights.length > 0 && (
@@ -345,6 +398,19 @@ export default function Home() {
                   </div>
                 )}
 
+                {/* SNS シェアボタン */}
+                <div className="mb-4 flex gap-3">
+                  <button
+                    onClick={handleShare}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-black hover:bg-gray-800 text-white text-sm font-medium transition active:scale-95"
+                  >
+                    <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                    </svg>
+                    Xでシェア
+                  </button>
+                </div>
+
                 <p className="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
                   ※ このツールは統計的な推定に基づいています。結果は参考値であり、100%の精度を保証するものではありません。
                 </p>
@@ -355,7 +421,11 @@ export default function Home() {
           <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-8">
             Powered by{" "}
             <a href="https://huggingface.co/openai-community/roberta-large-openai-detector" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-600 dark:hover:text-gray-300">
-              roberta-large-openai-detector
+              roberta-large
+            </a>
+            {" "}+{" "}
+            <a href="https://huggingface.co/fakespot-ai/roberta-base-ai-text-detection-v1" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-600 dark:hover:text-gray-300">
+              fakespot
             </a>
           </p>
         </div>

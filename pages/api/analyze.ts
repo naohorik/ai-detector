@@ -10,8 +10,10 @@ type SuccessResponse = {
   highlights: string[];
   language: "ja" | "en" | "mixed";
   languageWarning?: string;
-  rewriteScore: number;       // 書き直し推奨度 0〜100
-  rewriteTips: string[];      // 書き直しの具体的アドバイス
+  rewriteScore: number;
+  rewriteTips: string[];
+  elapsedMs: number;          // 判定にかかった時間（ms）
+  modelScores: { model: string; score: number }[]; // 各モデルのスコア
 };
 
 type ErrorResponse = { error: string };
@@ -21,8 +23,22 @@ type HFResult = { label: string; score: number }[];
 const MIN_CHARS = 200;
 const MAX_CHARS = 5000;
 const CHUNK_SIZE = 250;
-const HF_MODEL_URL =
-  "https://router.huggingface.co/hf-inference/models/openai-community/roberta-large-openai-detector";
+const HF_BASE = "https://router.huggingface.co/hf-inference/models";
+
+// 並列判定に使用するモデル一覧
+// label パターン: AI寄りのラベルを正規表現で指定
+const MODELS = [
+  {
+    name: "roberta-large",
+    url: `${HF_BASE}/openai-community/roberta-large-openai-detector`,
+    aiLabel: /chatgpt|ai|fake|generated|label_1/i,
+  },
+  {
+    name: "fakespot",
+    url: `${HF_BASE}/fakespot-ai/roberta-base-ai-text-detection-v1`,
+    aiLabel: /^ai$/i,
+  },
+];
 
 // ── 言語検出 ─────────────────────────────────────────────
 function detectLanguage(text: string): "ja" | "en" | "mixed" {
@@ -170,42 +186,53 @@ export default async function handler(
 
   // 言語検出
   const language = detectLanguage(text);
+  const startTime = Date.now();
 
   try {
+    // テキストをチャンクに分割
     const chunks: string[] = [];
     for (let i = 0; i < text.length; i += CHUNK_SIZE) {
       const chunk = text.slice(i, i + CHUNK_SIZE).trim();
       if (chunk.length > 0) chunks.push(chunk);
     }
 
-    const scores: { ai: number; human: number }[] = [];
-
-    for (const chunk of chunks) {
-      const hfRes = await fetch(HF_MODEL_URL, {
+    // 1チャンクを1モデルに送信する関数
+    const fetchScore = async (chunk: string, modelUrl: string, aiLabel: RegExp): Promise<number> => {
+      const hfRes = await fetch(modelUrl, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ inputs: chunk, options: { truncation: true } }),
       });
-
-      if (hfRes.status === 503) return res.status(503).json({ error: "モデルを起動中です。20〜30秒後にもう一度お試しください。" });
-      if (!hfRes.ok) {
-        const errText = await hfRes.text();
-        return res.status(500).json({ error: `判定エラー(${hfRes.status}): ${errText}` });
-      }
-
+      if (!hfRes.ok) return -1; // エラー時は除外
       const raw = await hfRes.json();
       const results: HFResult = Array.isArray(raw[0]) ? raw[0] : raw;
-      const aiEntry = results.find((r) => /chatgpt|ai|fake|generated|label_1/i.test(r.label));
+      const aiEntry = results.find((r) => aiLabel.test(r.label));
       const humanEntry = results.find((r) => /human|real|label_0/i.test(r.label));
-      const ai = aiEntry?.score ?? (humanEntry ? 1 - humanEntry.score : 0);
-      const human = humanEntry?.score ?? (aiEntry ? 1 - aiEntry.score : 0);
-      scores.push({ ai, human });
+      return aiEntry?.score ?? (humanEntry ? 1 - humanEntry.score : -1);
+    };
+
+    // 全モデル × 全チャンクを並列実行
+    const modelResults = await Promise.all(
+      MODELS.map(async (model) => {
+        const chunkScores = await Promise.all(
+          chunks.map((chunk) => fetchScore(chunk, model.url, model.aiLabel))
+        );
+        const valid = chunkScores.filter((s) => s >= 0);
+        const avg = valid.length > 0 ? valid.reduce((a, b) => a + b, 0) / valid.length : -1;
+        return { model: model.name, score: avg };
+      })
+    );
+
+    // 有効なモデルのスコアを平均して最終スコアを算出
+    const validModels = modelResults.filter((m) => m.score >= 0);
+    if (validModels.length === 0) {
+      return res.status(503).json({ error: "モデルを起動中です。20〜30秒後にもう一度お試しください。" });
     }
 
-    const avgAi = scores.reduce((sum, s) => sum + s.ai, 0) / scores.length;
-    const avgHuman = scores.reduce((sum, s) => sum + s.human, 0) / scores.length;
+    const avgAi = validModels.reduce((sum, m) => sum + m.score, 0) / validModels.length;
     const aiScore = Math.round(avgAi * 100);
-    const humanScore = Math.round(avgHuman * 100);
+    const humanScore = 100 - aiScore;
+    const elapsedMs = Date.now() - startTime;
 
     const { verdict, label } = getVerdict(aiScore);
     const reasons = analyzeReasons(text, aiScore, language);
@@ -214,12 +241,17 @@ export default async function handler(
 
     const languageWarning =
       language === "ja"
-        ? "このモデルは英語テキスト向けに訓練されているため、日本語の精度は低下する場合があります"
+        ? "これらのモデルは主に英語テキスト向けに訓練されています。日本語の判定精度は参考値としてご利用ください"
         : language === "mixed"
         ? "日英混在のテキストが検出されました。英語部分の判定精度が高くなります"
         : undefined;
 
-    return res.status(200).json({ aiScore, humanScore, verdict, label, reasons, highlights, language, languageWarning, rewriteScore, rewriteTips });
+    return res.status(200).json({
+      aiScore, humanScore, verdict, label, reasons, highlights,
+      language, languageWarning, rewriteScore, rewriteTips,
+      elapsedMs,
+      modelScores: validModels.map((m) => ({ model: m.model, score: Math.round(m.score * 100) })),
+    });
   } catch (err) {
     console.error("Unexpected error:", err);
     return res.status(500).json({ error: "予期しないエラーが発生しました" });
